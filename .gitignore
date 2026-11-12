@@ -1,0 +1,8 @@
+# Gerado pelo Claude Code a cada carregamento; nunca editar.
+.claude-plugin/types/
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,6 @@
+{
+  "name": "aviso-voz",
+  "version": "1.0.0",
+  "description": "Avisos falados em português quando o Claude termina uma tarefa ou precisa de você, com voz natural e painel de ajustes.",
+  "author": { "name": "Fabao" }
+}

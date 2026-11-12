@@ -1,0 +1,12 @@
+{
+  "name": "fabaomega-aviso-voz",
+  "description": "Aviso por voz para o Claude Code, em português.",
+  "owner": { "name": "Fabao" },
+  "plugins": [
+    {
+      "name": "aviso-voz",
+      "source": "./",
+      "description": "Avisos falados em português quando o Claude termina uma tarefa ou precisa de você."
+    }
+  ]
+}
