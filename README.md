@@ -18,7 +18,7 @@ Assim você pode fazer outra coisa longe da tela e só voltar quando ele chamar.
 
 - **Windows 10 ou 11.** (Mac e Linux ainda não.)
 - **Claude Code com suporte a mods** (testado na versão 2.1.312), no app do Claude ou no terminal.
-- **Internet na primeira vez**, para baixar a voz (uns 120 MB, de 1 a 3 minutos).
+- **Internet na primeira vez**, para baixar a voz (uns 40 MB baixados, cerca de 1 minuto; ocupa uns 120 MB no disco).
 - **Não precisa instalar Python nem nada:** o próprio plugin prepara tudo, numa pasta só dele.
 
 ## Como instalar (passo a passo para leigos)
@@ -63,8 +63,11 @@ Responda `y` à pergunta de adicionar o marketplace e escolha o escopo de usuár
 ### Passo 4 · Reiniciar e deixar ele preparar a voz
 1. Feche o Claude por completo (ícone perto do relógio, botão direito, **Sair**) e abra de novo.
 2. Numa conversa nova, mande uma mensagem qualquer. Se o app perguntar se pode ligar os mods, aceite.
-3. Aparece o aviso **"preparando a voz pela primeira vez (1–3 min)"**. Espere o **"Aviso por voz pronto"**.
+3. **A voz natural baixa sozinha, sem você clicar em nada.** O painel do aviso abre e o card **Voz natural**
+   mostra uma **barra laranja** com o andamento ("Baixando a voz natural… 45% · 18 de 40 MB").
+   Espere chegar em **"Voz natural pronta"** (cerca de 1 minuto). Isso só acontece uma vez.
    Enquanto isso, se o Claude precisar de você, quem avisa é a voz do Windows.
+   O botão **Tentar de novo** só aparece se algo der errado.
 4. Teste, digitando **sozinho** na caixa de mensagem (sem nenhum outro texto na mesma mensagem):
    ```
    /aviso-voz testar
@@ -90,15 +93,25 @@ Digite cada comando **sozinho** na mensagem.
 | --- | --- |
 | **Voz** | Francisca (padrão), Thalita ou Antonio |
 | **Como te chamar** | Seu nome no começo dos avisos ("Ana, preciso da sua autorização"). Vazio = sem nome |
-| **Respostas curtas** | Falar toda resposta, ou só as que demoraram (padrão: 20 s ou mais) |
+| **Quando avisar** | Dois interruptores, os dois ligados por padrão: **Quando termina** (a tarefa acabou sem pergunta) e **Quando precisa de você** (pergunta ou autorização). Abaixo deles, o tempo mínimo: **Falar todas** ou **Só de 20 s em diante** (vale para os dois) |
 | **Repetir até você responder** | Desligada, 5, 10 ou 15 minutos |
 | **Tamanho da frase** | Curta, média, detalhada ou completa |
 | **Silêncio** | 30 min, 1 h, 2 h, ou desfazer |
 | **Microfone** | Calar na hora em que você dita no microfone do Claude |
 | **Ligar / Desligar** | Pausa tudo sem desinstalar |
 
-Por padrão, o aviso só fala quando **o Claude precisa de você** (uma pergunta, uma autorização ou um erro).
-Tarefas que terminam sem pergunta ficam em silêncio.
+Por padrão, o aviso fala **quando a tarefa termina** e **quando o Claude precisa de você** (uma pergunta ou uma autorização).
+Cada um tem o seu interruptor no card **Quando avisar**.
+
+- **Quando termina:** um resumo curto do que foi feito ("Ana, terminei. Corrigi o relatório."), **uma vez só**.
+- **Quando precisa de você:** uma pergunta na resposta repete no intervalo que você escolher, até você responder; um pedido de autorização é falado uma vez.
+- **Tempo mínimo:** respostas mais rápidas que o mínimo (padrão 20 s) ficam em silêncio, terminadas ou com pergunta. Com **Falar todas**, toda resposta é falada.
+- **Erros** sempre são falados, a não ser que o aviso esteja desligado ou em silêncio.
+
+### Novidades da 1.1.0
+- Novo interruptor **Quando termina**: o aviso agora fala também quando a tarefa acaba, mesmo sem pergunta (ligado por padrão).
+- O card **Respostas curtas** virou **Quando avisar**, com os dois interruptores e um tempo mínimo único para tudo.
+- A voz natural **baixa sozinha** logo que o plugin é aberto, com uma **barra de progresso** no card **Voz natural**. Não precisa mais clicar em nada.
 
 ## Problemas comuns
 
@@ -106,11 +119,11 @@ Tarefas que terminam sem pergunta ficam em silêncio.
 | --- | --- |
 | "Repository not found" ao instalar | Aceite o convite (passo 1) e refaça o login (`gh auth login`, `gh auth setup-git`) |
 | Não sai som nenhum | Confira o volume do Windows e rode `/aviso-voz testar`. Depois veja `/aviso-voz status` |
-| Fica em "Preparando a voz…" | Rode `/aviso-voz instalar`. A primeira vez precisa de internet |
+| A barra não anda ou some sem terminar | Se o instalador parar de responder por 1 minuto, ele recomeça sozinho; senão, toque em **Tentar de novo** ou rode `/aviso-voz instalar`. A primeira vez precisa de internet. O que aconteceu fica em `%USERPROFILE%\.claude\aviso-voz\instalacao.log` |
 | "Não consegui preparar a voz" | Antivírus ou rede da empresa podem bloquear o download. Libere `github.com`, `python.org` e `pypi.org`, e rode `/aviso-voz instalar` |
 | Rede da empresa com proxy | Peça ao TI para liberar os sites acima; a voz em si usa o serviço de voz da Microsoft |
 | `/aviso-voz` não faz nada | O comando tem que ser a única coisa da mensagem |
-| Fala de mais | Use **Silêncio**, ou deixe **Respostas curtas** em "Só de 20s em diante" |
+| Fala de mais | No card **Quando avisar**, desligue **Quando termina**, aumente os segundos mínimos, ou use **Silêncio** |
 
 O passo a passo da preparação fica em `%USERPROFILE%\.claude\aviso-voz\instalacao.log`, e os erros em `erros.log`, na mesma pasta.
 

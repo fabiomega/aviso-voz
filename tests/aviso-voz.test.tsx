@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { arquivos, fraseReserva, lerRuntime, mesclarCfg, pastaDados } from '../hooks/logica'
+import { arquivos, fraseReserva, lerRuntime, mesclarCfg, motivoCalar, pastaDados } from '../hooks/logica'
 
 type OnFn = Parameters<Parameters<typeof test>[1]>[1]
 
@@ -8,7 +8,7 @@ const NOW = new Date(2026, 10, 12, 12).getTime()
 const PERFIL = 'C:\\Users\\Ana'
 const DADOS = 'C:\\Users\\Ana\\.claude\\aviso-voz'
 const PY = 'C:\\Users\\Ana\\.claude\\aviso-voz\\runtime\\venv\\Scripts\\python.exe'
-const PRONTO = `\uFEFF${JSON.stringify({ python: PY, pythonw: PY, versao: '1.0.0' })}`
+const PRONTO = `\uFEFF${JSON.stringify({ python: PY, pythonw: PY, versao: '1.1.0' })}`
 
 type Chamada = { argv: readonly string[]; stdin?: string; env?: Record<string, string> }
 
@@ -19,6 +19,8 @@ type Mundo = {
   arquivos: Record<string, string>
   clock: { advance: (ms: number) => Promise<void>; settle: () => Promise<void> }
   falhaProcesso: boolean
+  aberturas: number
+  leiturasEstado: number
 }
 
 type Opcoes = {
@@ -42,11 +44,12 @@ function mundo(on: OnFn, o: Opcoes = {}): Mundo {
   if (o.pronto === true) files[`${DADOS}\\runtime\\pronto.json`] = PRONTO
   if (o.estado !== undefined) files[`${DADOS}\\runtime\\estado.json`] = JSON.stringify(o.estado)
   if (o.cfg !== undefined) files[`${DADOS}\\config.json`] = JSON.stringify(o.cfg)
-  const m: Mundo = { chamadas: [], toasts: [], escritas: {}, arquivos: files, clock, falhaProcesso: false }
+  const m: Mundo = { chamadas: [], toasts: [], escritas: {}, arquivos: files, clock, falhaProcesso: false, aberturas: 0, leiturasEstado: 0 }
 
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('command.register', () => ({ value: { command: 'aviso-voz' } }))
   on('fs.read', (_, e) => {
+    if (e.path.endsWith('\\runtime\\estado.json')) m.leiturasEstado += 1
     const texto = files[e.path]
     if (texto === undefined) throw new Error(`ENOENT: ${e.path}`)
     return { value: texto }
@@ -65,13 +68,17 @@ function mundo(on: OnFn, o: Opcoes = {}): Mundo {
     m.toasts.push(String((e as unknown as { text?: string }).text ?? ''))
     return { value: undefined }
   })
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.open', () => {
+    m.aberturas += 1
+    return { value: { isPlaced: true } }
+  })
   on('ui.panes', () => ({ value: [] }))
   on('ui.invalidate', () => ({ value: undefined }))
   on('classic.Stop', () => ({}))
   on('classic.UserPromptSubmit', () => ({}))
   on('classic.Notification', () => ({}))
   on('prompt.submit', (_, e) => ({ text: e.text }))
+  on('turn.complete', () => ({ text: '' }))
 
   return m
 }
@@ -95,15 +102,45 @@ describe('regras puras', () => {
     expect(lerRuntime(undefined, undefined).fase).toBe('ausente')
   })
 
-  test('reserva: só fala o que precisa da pessoa, com o nome quando há', async () => {
+  test('reserva: segue os dois interruptores e o tempo mínimo, com o nome quando há', async () => {
     const semNome = mesclarCfg({})
     const comNome = mesclarCfg({ nome: 'Ana' })
     expect(fraseReserva('notificacao', { notification_type: 'permission_prompt' }, semNome)).toBe('Preciso da sua autorização.')
     expect(fraseReserva('notificacao', { notification_type: 'permission_prompt' }, comNome)).toBe('Ana, preciso da sua autorização.')
     expect(fraseReserva('notificacao', { notification_type: 'idle_prompt' }, semNome)).toBe(undefined)
-    expect(fraseReserva('stop', { last_assistant_message: 'Pronto, terminei.' }, semNome)).toBe(undefined)
+    expect(fraseReserva('stop', { last_assistant_message: 'Pronto, terminei.' }, semNome)).toBe('Terminei.')
+    expect(fraseReserva('stop', { last_assistant_message: 'Pronto, terminei.' }, comNome, 30)).toBe('Ana, terminei.')
     expect(fraseReserva('stop', { last_assistant_message: 'Posso enviar?' }, semNome)).toBe('Terminei e tenho uma pergunta para você.')
     expect(fraseReserva('parar', {}, semNome)).toBe(undefined)
+    // mesmo mínimo para os dois tipos
+    expect(fraseReserva('stop', { last_assistant_message: 'Pronto.' }, semNome, 5)).toBe(undefined)
+    expect(fraseReserva('stop', { last_assistant_message: 'Posso?' }, semNome, 5)).toBe(undefined)
+    expect(fraseReserva('notificacao', { notification_type: 'permission_prompt' }, semNome, 5)).toBe(undefined)
+    // "Falar todas" desliga o mínimo
+    const todas = mesclarCfg({ respostas_curtas: true })
+    expect(fraseReserva('stop', { last_assistant_message: 'Pronto.' }, todas, 2)).toBe('Terminei.')
+    expect(fraseReserva('notificacao', { notification_type: 'permission_prompt' }, todas, 2)).toBe('Preciso da sua autorização.')
+    // interruptores
+    const semTerminar = mesclarCfg({ avisar_ao_terminar: false })
+    expect(fraseReserva('stop', { last_assistant_message: 'Pronto.' }, semTerminar, 60)).toBe(undefined)
+    expect(fraseReserva('stop', { last_assistant_message: 'Posso?' }, semTerminar, 60)).toBe('Terminei e tenho uma pergunta para você.')
+    const semPrecisa = mesclarCfg({ avisar_quando_precisa: false })
+    expect(fraseReserva('stop', { last_assistant_message: 'Posso?' }, semPrecisa, 60)).toBe(undefined)
+    expect(fraseReserva('notificacao', { notification_type: 'elicitation_dialog' }, semPrecisa, 60)).toBe(undefined)
+    expect(fraseReserva('stop', { last_assistant_message: 'Pronto.' }, semPrecisa, 60)).toBe('Terminei.')
+  })
+
+  test('regras de silêncio: interruptores, mínimo e a chave antiga ignorada', async () => {
+    const padrao = mesclarCfg({})
+    expect(padrao.avisar_ao_terminar).toBe(true)
+    expect(padrao.avisar_quando_precisa).toBe(true)
+    expect(motivoCalar(padrao, 'concluido', 25)).toBe('')
+    expect(motivoCalar(padrao, 'concluido', 10)).toBe('curto')
+    expect(motivoCalar(padrao, 'precisa', 10)).toBe('curto')
+    expect(motivoCalar(padrao, 'precisa', undefined)).toBe('')
+    const antiga = mesclarCfg({ so_quando_espera: true })
+    expect('so_quando_espera' in antiga).toBe(false)
+    expect(motivoCalar(antiga, 'concluido', 60)).toBe('')
   })
 
   test('configuração padrão sem nome pessoal', async () => {
@@ -144,15 +181,42 @@ describe('eventos do Claude', () => {
     expect(m.chamadas.length).toBe(2)
   })
 
-  test('antes da voz natural ficar pronta, a voz do Windows avisa o que precisa', async ($, on) => {
+  test('antes da voz natural ficar pronta, a voz do Windows avisa a pergunta e o fim da tarefa', async ($, on) => {
     const m = mundo(on, { cfg: { nome: 'Ana' } })
     await $.classic.Notification({ ...base, message: 'permission', notification_type: 'permission_prompt' })
+    await m.clock.advance(1)
     await $.classic.Stop({ ...base, stop_hook_active: false, last_assistant_message: 'Terminei.' })
     await m.clock.advance(1)
-    expect(m.chamadas.length).toBe(1)
+    expect(m.chamadas.length).toBe(2)
     expect(m.chamadas[0]?.argv[0]).toBe('powershell.exe')
     expect(String(m.chamadas[0]?.argv.at(-1))).toContain('System.Speech')
     expect(m.chamadas[0]?.env?.AVISO_TXT).toBe('Ana, preciso da sua autorização.')
+    expect(m.chamadas[1]?.env?.AVISO_TXT).toBe('Ana, terminei.')
+  })
+
+  test('a voz do Windows respeita o tempo mínimo desde o pedido', async ($, on) => {
+    const m = mundo(on, { cfg: {} })
+    await $.classic.UserPromptSubmit({ ...base, prompt: 'oi' })
+    await m.clock.advance(5000)
+    await $.classic.Stop({ ...base, stop_hook_active: false, last_assistant_message: 'Pronto.' })
+    await m.clock.advance(1)
+    expect(m.chamadas.filter(c => c.env?.AVISO_TXT !== undefined).length).toBe(0)
+    await $.classic.UserPromptSubmit({ ...base, prompt: 'faz algo grande' })
+    await m.clock.advance(30000)
+    await $.classic.Stop({ ...base, stop_hook_active: false, last_assistant_message: 'Pronto.' })
+    await m.clock.advance(1)
+    const faladas = m.chamadas.filter(c => c.env?.AVISO_TXT !== undefined)
+    expect(faladas.length).toBe(1)
+    expect(faladas[0]?.env?.AVISO_TXT).toBe('Terminei.')
+  })
+
+  test('a voz do Windows respeita os interruptores', async ($, on) => {
+    const m = mundo(on, { cfg: { avisar_ao_terminar: false, avisar_quando_precisa: false } })
+    await $.classic.Notification({ ...base, message: 'permission', notification_type: 'permission_prompt' })
+    await $.classic.Stop({ ...base, stop_hook_active: false, last_assistant_message: 'Pronto.' })
+    await $.classic.Stop({ ...base, stop_hook_active: false, last_assistant_message: 'Posso seguir?' })
+    await m.clock.advance(1)
+    expect(m.chamadas.filter(c => c.env?.AVISO_TXT !== undefined).length).toBe(0)
   })
 
   test('em silêncio, nem a voz do Windows fala', async ($, on) => {
@@ -181,7 +245,7 @@ describe('preparação da voz', () => {
     expect(inst.length).toBe(1)
     expect(String(inst[0]?.env?.AVISO_VOZ_ARGS)).toContain('\\scripts\\instalar.ps1')
     expect(String(inst[0]?.env?.AVISO_VOZ_ARGS)).toContain(`-Dados "${DADOS}"`)
-    expect(m.toasts.some(t => t.includes('preparando a voz pela primeira vez'))).toBe(true)
+    expect(m.toasts.some(t => t.includes('pela primeira vez'))).toBe(true)
   })
 
   test('com o runtime pronto, nada é instalado', async ($, on) => {
@@ -264,10 +328,36 @@ describe('painel', () => {
     for (const surface of ['desktop', 'terminal'] as const) {
       const ui = await $.ui.mount({ ...PANE, surface })
       expect((await ui.find({ type: 'Text', text: /^Aviso por voz$/ }))?.text).toBe('Aviso por voz')
-      expect((await ui.find({ type: 'Text', text: /Voz pronta/ }))?.text).toBe('Voz pronta')
+      expect((await ui.find({ type: 'Text', text: /^Voz natural pronta$/ }))?.text).toBe('Voz natural pronta')
       expect(await ui.find({ type: 'Text', text: /COMO TE CHAMAR/ })).not.toBe(undefined)
       await ui.unmount()
     }
+  })
+
+  test('card QUANDO AVISAR: dois interruptores ligados por padrão, no desktop e no terminal', async ($, on) => {
+    mundo(on, { pronto: true })
+    for (const surface of ['desktop', 'terminal'] as const) {
+      const ui = await $.ui.mount({ ...PANE, surface })
+      expect(await ui.find({ type: 'Text', text: /QUANDO AVISAR/ })).not.toBe(undefined)
+      expect(await ui.find({ type: 'Text', text: /RESPOSTAS CURTAS/ })).toBe(undefined)
+      expect(await ui.find({ type: 'Text', text: /^Quando termina$/ })).not.toBe(undefined)
+      expect(await ui.find({ type: 'Text', text: /^Quando precisa de você$/ })).not.toBe(undefined)
+      expect((await ui.find({ type: 'Button', key: 'terminar-on' }))?.props.variant).toBe('primary')
+      expect((await ui.find({ type: 'Button', key: 'precisa-on' }))?.props.variant).toBe('primary')
+      expect((await ui.find({ type: 'Button', key: 'terminar-off' }))?.props.variant).toBe('secondary')
+      expect(await ui.find({ type: 'Text', text: /terminadas ou com pergunta/ })).not.toBe(undefined)
+      await ui.unmount()
+    }
+  })
+
+  test('desligar um interruptor grava a chave e apaga a chave antiga', async ($, on) => {
+    const m = mundo(on, { pronto: true, cfg: { so_quando_espera: true, nome: 'Ana' } })
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    await ui.press({ key: 'terminar-off' })
+    expect(JSON.parse(String(m.escritas[`${DADOS}\\config.json`]))).toEqual({ nome: 'Ana', avisar_ao_terminar: false })
+    await ui.press({ key: 'precisa-off' })
+    expect(JSON.parse(String(m.escritas[`${DADOS}\\config.json`])).avisar_quando_precisa).toBe(false)
+    await ui.unmount()
   })
 
   test('salvar o nome grava só essa opção no config.json', async ($, on) => {
@@ -293,5 +383,128 @@ describe('painel', () => {
     const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
     expect(await ui.find({ type: 'Text', text: /só funciona no Windows/ })).not.toBe(undefined)
     await ui.unmount()
+  })
+})
+
+const ESTADO = `${DADOS}\\runtime\\estado.json`
+const LOG = `${DADOS}\\instalacao.log`
+const inicios = (m: Mundo) => m.chamadas.filter(c => String(c.argv.at(-1)).includes('Start-Process'))
+
+describe('download automático da voz (1.1.0)', () => {
+  test('o primeiro pedido começa o download, mesmo sem início de sessão', async ($, on) => {
+    const m = mundo(on)
+    await $.classic.UserPromptSubmit({ ...base, prompt: 'oi' })
+    await m.clock.advance(1)
+    await m.clock.settle()
+    expect(inicios(m).length).toBe(1)
+    expect(JSON.parse(String(m.escritas[ESTADO])).fase).toBe('instalando')
+    expect(String(m.arquivos[LOG])).toContain('[plugin] abrindo o instalador (pedido enviado)')
+  })
+
+  test('o início da sessão começa sozinho e abre o painel na primeira vez', async ($, on) => {
+    const m = mundo(on)
+    await $.session.start({ cwd: 'C:\\projeto', surface: 'desktop', isInteractive: true })
+    await m.clock.advance(1)
+    expect(inicios(m).length).toBe(1)
+    expect(m.toasts.filter(t => t.includes('pela primeira vez')).length).toBe(1)
+    expect(m.aberturas).toBeGreaterThan(0)
+  })
+
+  test('vários gatilhos juntos abrem um instalador só', async ($, on) => {
+    const m = mundo(on)
+    await $.session.start({ cwd: 'C:\\projeto', surface: 'desktop', isInteractive: true })
+    await $.prompt.submit({ text: 'oi' })
+    await $.command.run({ command: 'aviso-voz', args: '' })
+    await m.clock.advance(2500)
+    await $.prompt.submit({ text: 'de novo' })
+    await m.clock.advance(1)
+    expect(inicios(m).length).toBe(1)
+  })
+
+  test('o aviso de "primeira vez" sai uma vez só, mesmo se precisar baixar de novo', async ($, on) => {
+    const m = mundo(on)
+    await $.session.start({ cwd: 'C:\\projeto', surface: 'desktop', isInteractive: true })
+    await m.clock.advance(1)
+    delete m.arquivos[ESTADO]
+    await m.clock.advance(61000)
+    await $.prompt.submit({ text: 'oi' })
+    await m.clock.advance(1)
+    expect(inicios(m).length).toBe(2)
+    expect(m.toasts.filter(t => t.includes('pela primeira vez')).length).toBe(1)
+  })
+
+  test('instalação viva (batimento recente) não é aberta de novo; parada há mais de 60 s recomeça', async ($, on) => {
+    const viva = mundo(on, { estado: { fase: 'instalando', pct: 40, heartbeat: NOW / 1000 - 10, quando: NOW / 1000 - 10 } })
+    await $.session.start({ cwd: 'C:\\projeto', surface: 'desktop', isInteractive: true })
+    await viva.clock.advance(1)
+    expect(inicios(viva).length).toBe(0)
+  })
+
+  test('instalação que parou de bater o coração recomeça com -Forcar', async ($, on) => {
+    const m = mundo(on, { estado: { fase: 'instalando', pct: 40, heartbeat: NOW / 1000 - 120, quando: NOW / 1000 - 120 } })
+    await $.session.start({ cwd: 'C:\\projeto', surface: 'desktop', isInteractive: true })
+    await m.clock.advance(1)
+    expect(inicios(m).length).toBe(1)
+    expect(String(inicios(m)[0]?.env?.AVISO_VOZ_ARGS)).toContain('-Forcar')
+  })
+
+  test('falha ao abrir o instalador fica registrada no log e no estado', async ($, on) => {
+    const m = mundo(on)
+    m.falhaProcesso = true
+    await $.classic.UserPromptSubmit({ ...base, prompt: 'oi' })
+    await m.clock.advance(1)
+    await m.clock.settle()
+    expect(JSON.parse(String(m.arquivos[ESTADO])).fase).toBe('falhou')
+    expect(String(m.arquivos[LOG])).toContain('não consegui abrir o instalador')
+  })
+
+  test('o acompanhamento para quando a voz fica pronta', async ($, on) => {
+    const m = mundo(on)
+    await $.session.start({ cwd: 'C:\\projeto', surface: 'desktop', isInteractive: true })
+    await m.clock.advance(1)
+    m.arquivos[`${DADOS}\\runtime\\pronto.json`] = PRONTO
+    await m.clock.advance(1000)
+    await m.clock.settle()
+    await m.clock.advance(1000)
+    await m.clock.settle()
+    expect(m.toasts.some(t => t.includes('Aviso por voz pronto'))).toBe(true)
+    const antes = m.leiturasEstado
+    await m.clock.advance(10000)
+    await $.prompt.submit({ text: 'oi' })
+    await m.clock.advance(1)
+    expect(m.leiturasEstado).toBe(antes)
+  })
+
+  test('painel: barra grossa com etapa, % e MB enquanto baixa, no desktop e no terminal', async ($, on) => {
+    mundo(on, {
+      estado: { fase: 'instalando', etapa: 'Baixando a voz natural', pct: 45, baixadoMB: 18, totalMB: 40, heartbeat: NOW / 1000 - 1, quando: NOW / 1000 - 1 },
+    })
+    const desk = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    expect((await desk.find({ type: 'Text', text: /Baixando a voz natural… 45% · 18 de 40 MB/ }))?.text).toBe('Baixando a voz natural… 45% · 18 de 40 MB')
+    expect(await desk.find({ type: 'Text', text: /isso só acontece uma vez/ })).not.toBe(undefined)
+    expect(await desk.find({ type: 'Box', key: 'barra' })).not.toBe(undefined)
+    expect(await desk.find({ type: 'Button', key: 'instalar' })).toBe(undefined)
+    await desk.unmount()
+    const term = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const barra = (await term.find({ type: 'Text', text: /█+░+/ }))?.text ?? ''
+    expect(barra.length).toBeGreaterThan(20)
+    await term.unmount()
+  })
+
+  test('painel: falha em vermelho com Tentar de novo', async ($, on) => {
+    mundo(on, { estado: { fase: 'falhou', mensagem: 'sem internet', quando: 1 } })
+    const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    expect((await ui.find({ type: 'Text', text: /Não consegui preparar a voz: sem internet/ }))?.props.color).toBe('error')
+    expect(await ui.find({ type: 'Button', key: 'instalar' })).not.toBe(undefined)
+    await ui.unmount()
+  })
+
+  test('painel: pronta em verde, sem barra e sem botão', async ($, on) => {
+    mundo(on, { pronto: true })
+    const ok = await $.ui.mount({ ...PANE, surface: 'desktop' })
+    expect((await ok.find({ type: 'Text', text: /✓ Voz natural pronta/ }))?.props.color).toBe('success')
+    expect(await ok.find({ type: 'Box', key: 'barra' })).toBe(undefined)
+    expect(await ok.find({ type: 'Button', key: 'instalar' })).toBe(undefined)
+    await ok.unmount()
   })
 })

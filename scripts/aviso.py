@@ -56,9 +56,10 @@ PADRAO = {
     "tamanho": "curta",             # curta | media | detalhada | completa
     "limite_segundos": 90,          # teto de fala no modo completa
     "calar_com_microfone": True,    # para de falar quando o microfone do app Claude entra em uso
+    "avisar_ao_terminar": True,     # fala quando a resposta termina sem pergunta (uma vez, sem repetir)
+    "avisar_quando_precisa": True,  # fala quando há pergunta, autorização ou escolha (com repetição)
     "respostas_curtas": False,      # True = fala respostas de qualquer duração (ignora o mínimo)
-    "minimo_tarefa_segundos": 20,   # com respostas_curtas desligado, mais rápidas que isso ficam em silêncio
-    "so_quando_espera": True,       # só fala quando há pergunta ou erro; fim de etapa fica em silêncio
+    "minimo_tarefa_segundos": 20,   # com respostas_curtas desligado, mais rápidas que isso ficam em silêncio (os dois tipos)
     "repetir_minutos": 5,           # 0 desliga a repetição
     "repeticao_crescente": True,    # 5, 10, 15, 15...
     "max_repeticoes": 6,
@@ -126,6 +127,8 @@ def carregar_cfg():
                 cfg[k] = v
     except Exception:
         pass
+    # Antes da 1.1.0, "so_quando_espera" calava as tarefas terminadas; agora quem manda são os dois interruptores.
+    cfg.pop("so_quando_espera", None)
     return cfg
 
 
@@ -553,7 +556,7 @@ def iniciar_locutor():
             continue
 
 
-def enfileirar(sid, cwd, texto, tipo="concluido", repetir=True, resumir_de=None):
+def enfileirar(sid, cwd, texto, tipo="concluido", repetir=True, resumir_de=None, terminei=False):
     garantir_pastas()
     cfg = carregar_cfg()
     projeto = nome_projeto(cwd)
@@ -563,6 +566,8 @@ def enfileirar(sid, cwd, texto, tipo="concluido", repetir=True, resumir_de=None)
             "ts": time.time(), "repetir": repetir}
     if resumir_de:
         item["resumir_de"] = resumir_de
+    if terminei:
+        item["terminei"] = True  # abre a fala com "terminei" (e o nome, se houver)
     motivo = silenciado(cfg)
     if motivo:
         registrar_hist(item, "silenciado:" + motivo)
@@ -799,6 +804,8 @@ def falar(item, cfg):
     if original and modo in RESUMOS:
         item["texto"] = item["texto"].rstrip() + " " + random.choice(CHAT_FRASES)
     texto = item["texto"]
+    if item.get("terminei") and not item.get("rep"):
+        texto = chamar(cfg_ativo, "terminei. ") + texto
     if prefixo and not item.get("rep"):
         texto = f"{item['projeto']}. {texto}"
     pedacos = em_pedacos(texto)
@@ -899,6 +906,22 @@ def ler_stdin():
         return {}
 
 
+def motivo_calar(cfg, tipo, dur):
+    """Por que um aviso fica em silêncio ("" = falar). Erros não passam por aqui: sempre falam.
+
+    tipo "concluido" (terminou sem pergunta) obedece ao interruptor avisar_ao_terminar;
+    tipo "precisa" (pergunta, autorização, escolha) ao avisar_quando_precisa.
+    O mesmo tempo mínimo vale para os dois, salvo com "Falar todas" (respostas_curtas).
+    """
+    if tipo == "concluido" and not cfg.get("avisar_ao_terminar", True):
+        return "ignorado:interruptor-terminar"
+    if tipo == "precisa" and not cfg.get("avisar_quando_precisa", True):
+        return "ignorado:interruptor-precisa"
+    if not cfg.get("respostas_curtas", False) and dur < float(cfg.get("minimo_tarefa_segundos", 20)):
+        return f"ignorado:curto({int(dur)}s)"
+    return ""
+
+
 def cmd_stop():
     if os.environ.get("AVISO_VOZ_RESUMO"):
         return
@@ -916,19 +939,16 @@ def cmd_stop():
     if not precisa:
         # A janela voltou a trabalhar ou terminou sem pergunta: nada dela segue pendente.
         (SESS / f"{sid}.rep.json").unlink(missing_ok=True)
-        if cfg.get("so_quando_espera", True) and not falhou:
-            registrar_hist({"sid": sid, "projeto": nome_projeto(d.get("cwd")), "tipo": "concluido", "texto": fala},
-                           "ignorado:sem-pergunta")
-            return
-    curtas = bool(cfg.get("respostas_curtas", False))
-    if not curtas and dur < float(cfg.get("minimo_tarefa_segundos", 15)) and not precisa and not falhou:
-        registrar_hist({"sid": sid, "projeto": nome_projeto(d.get("cwd")), "tipo": "concluido", "texto": fala},
-                       f"ignorado:curto({int(dur)}s)")
-        return
     tipo = "erro" if falhou else "precisa" if precisa else "concluido"
+    motivo = None if falhou else motivo_calar(cfg, tipo, dur)
+    if motivo:
+        registrar_hist({"sid": sid, "projeto": nome_projeto(d.get("cwd")), "tipo": tipo, "texto": fala}, motivo)
+        return
     limpo = " ".join(dividir_frases(limpar(texto)))
     grande = cfg.get("tamanho") in RESUMOS and len(limpo) > RESUMOS[cfg["tamanho"]][0]
-    enfileirar(sid, d.get("cwd"), fala, tipo, resumir_de=limpo if grande else None)
+    # Terminou sem pergunta: fala uma vez só; a repetição fica para quando o Claude espera você.
+    enfileirar(sid, d.get("cwd"), fala, tipo, repetir=tipo != "concluido",
+               resumir_de=limpo if grande else None, terminei=tipo == "concluido")
 
 
 def cmd_notificacao():
@@ -942,6 +962,13 @@ def cmd_notificacao():
         return
     else:
         fala = random.choice([chamar(cfg, "preciso de uma resposta sua."), chamar(cfg, "tenho uma pergunta para você.")])
+    caminho = d.get("transcript_path") or ""
+    # Sem transcript não dá para medir: conta como tarefa longa, para não calar um pedido de autorização.
+    dur = ler_ultima_resposta(caminho)[1] if caminho and os.path.exists(caminho) else 3600.0
+    motivo = motivo_calar(cfg, "precisa", dur)
+    if motivo:
+        registrar_hist({"sid": sid, "projeto": nome_projeto(d.get("cwd")), "tipo": "precisa", "texto": fala}, motivo)
+        return
     # Sem repetição: aprovar uma permissão não passa pelo hook "parar" e o trabalho segue.
     enfileirar(sid, d.get("cwd"), fala, "precisa", repetir=False)
 
@@ -959,6 +986,9 @@ def cmd_parar(todos=False):
 def cmd_status():
     cfg = carregar_cfg()
     print(json.dumps(cfg, ensure_ascii=False, indent=2))
+    print("quando termina:", "falo" if cfg.get("avisar_ao_terminar", True) else "silêncio",
+          "| quando precisa de você:", "falo" if cfg.get("avisar_quando_precisa", True) else "silêncio",
+          "| mínimo:", "nenhum (falar todas)" if cfg.get("respostas_curtas") else f"{cfg.get('minimo_tarefa_segundos', 20)}s")
     print("silenciado agora:", silenciado(cfg) or "não")
     print("locutor:", "ativo" if LOCK.exists() and pid_vivo(int(LOCK.read_text() or 0)) else "parado")
     print("fila:", len(list(FILA.glob("*.json"))), "| repetições:", len(list(SESS.glob("*.rep.json"))),

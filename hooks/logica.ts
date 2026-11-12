@@ -1,7 +1,7 @@
 // Pure rules of the aviso-voz plugin: paths, settings, runtime state and the
 // built-in-voice fallback. No `$` here, so every rule is testable on its own.
 
-export const VERSAO = '1.0.0'
+export const VERSAO = '1.1.0'
 
 /** The settings aviso.py starts from; config.json holds only what the person changed. */
 export const PADRAO = {
@@ -13,9 +13,10 @@ export const PADRAO = {
   tamanho: 'curta',
   limite_segundos: 90,
   calar_com_microfone: true,
+  avisar_ao_terminar: true,
+  avisar_quando_precisa: true,
   respostas_curtas: false,
   minimo_tarefa_segundos: 20,
-  so_quando_espera: true,
   repetir_minutos: 5,
   repeticao_crescente: true,
   max_repeticoes: 6,
@@ -44,7 +45,17 @@ export type Runtime = {
   mensagem?: string
   /** Seconds since the epoch of the last estado.json write. */
   quando?: number
+  /** The installer's live progress: what it is doing, 0–100, and the megabytes behind the bar. */
+  etapa?: string
+  pct?: number
+  baixadoMB?: number
+  totalMB?: number
+  /** Seconds since the epoch; the installer refreshes it at least every couple of seconds. */
+  heartbeat?: number
 }
+
+/** An install that has not written for this long is dead, and a new one may start. */
+export const BATIMENTO_MORTO_SEG = 60
 
 /** Joins Windows path parts, whatever separators each part already has. */
 export function caminho(...partes: string[]): string {
@@ -92,7 +103,23 @@ export function mesclarCfg(bruto: unknown): Cfg {
       ;(cfg as Record<string, unknown>)[k] = v
     }
   }
+  // Before 1.1.0 "so_quando_espera" silenced finished tasks; the two switches replace it.
+  delete (cfg as Record<string, unknown>).so_quando_espera
   return cfg
+}
+
+/**
+ * Why a notice stays silent ('' = speak), the same rule aviso.py applies:
+ * each kind has its switch, and one minimum time covers both unless
+ * "Falar todas" is on. An unknown duration counts as a long task.
+ */
+export function motivoCalar(cfg: Cfg, tipo: 'concluido' | 'precisa', durSeg: number | undefined): string {
+  if (tipo === 'concluido' && cfg.avisar_ao_terminar === false) return 'interruptor-terminar'
+  if (tipo === 'precisa' && cfg.avisar_quando_precisa === false) return 'interruptor-precisa'
+  const minimo = Number(cfg.minimo_tarefa_segundos ?? PADRAO.minimo_tarefa_segundos)
+  if (cfg.respostas_curtas !== true && durSeg !== undefined && durSeg < minimo) return 'curto'
+
+  return ''
 }
 
 /** The runtime as the installer left it: pronto.json wins, then estado.json. */
@@ -103,15 +130,76 @@ export function lerRuntime(prontoTexto: string | undefined, estadoTexto: string 
   }
   const estado = lerJson(estadoTexto)
   if (estado !== undefined && (estado.fase === 'instalando' || estado.fase === 'falhou')) {
-    return { fase: estado.fase, mensagem: String(estado.mensagem ?? ''), quando: Number(estado.quando ?? 0) }
+    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+    const quando = Number(estado.quando ?? 0)
+    return {
+      fase: estado.fase,
+      mensagem: String(estado.mensagem ?? ''),
+      quando,
+      etapa: typeof estado.etapa === 'string' ? estado.etapa : undefined,
+      pct: num(estado.pct),
+      baixadoMB: num(estado.baixadoMB),
+      totalMB: num(estado.totalMB),
+      heartbeat: num(estado.heartbeat) ?? quando,
+    }
   }
 
   return { fase: 'ausente' }
 }
 
-/** An install still running, or one that died without saying so (older than 20 minutes is dead). */
+/** An install still beating: its heartbeat is younger than BATIMENTO_MORTO_SEG. */
 export function instalacaoViva(r: Runtime, agoraSeg: number): boolean {
-  return r.fase === 'instalando' && agoraSeg - Number(r.quando ?? 0) < 20 * 60
+  return r.fase === 'instalando' && agoraSeg - Number(r.heartbeat ?? r.quando ?? 0) < BATIMENTO_MORTO_SEG
+}
+
+/** 0–100, clamped; undefined while the installer has not said. */
+export function pctDe(r: Runtime): number {
+  return Math.max(0, Math.min(100, Math.round(Number(r.pct ?? 0))))
+}
+
+/** "Baixando a voz natural… 45% · 18 de 40 MB" */
+export function textoProgresso(r: Runtime): string {
+  const etapa = (r.etapa ?? 'Preparando a voz natural').replace(/[.…]+$/, '')
+  const mb =
+    r.baixadoMB !== undefined && r.totalMB !== undefined && r.totalMB > 0
+      ? ` · ${Math.round(Math.min(r.baixadoMB, r.totalMB))} de ${Math.round(r.totalMB)} MB`
+      : ''
+
+  return `${etapa}… ${pctDe(r)}%${mb}`
+}
+
+/** A full-row bar of blocks for the terminal, `largura` cells wide. */
+export function barraTexto(pct: number, largura: number): string {
+  const total = Math.max(4, Math.floor(largura))
+  const cheios = Math.round((Math.max(0, Math.min(100, pct)) / 100) * total)
+
+  return '█'.repeat(cheios) + '░'.repeat(total - cheios)
+}
+
+/** The estado.json the plugin writes before launching, so other windows see an install is on its way. */
+export function estadoInicial(agoraSeg: number): string {
+  return JSON.stringify({
+    fase: 'instalando',
+    mensagem: 'Preparando a voz pela primeira vez.',
+    etapa: 'Preparando a voz natural',
+    pct: 0,
+    heartbeat: agoraSeg,
+    quando: agoraSeg,
+    versao: VERSAO,
+  })
+}
+
+export function estadoFalhou(agoraSeg: number, mensagem: string): string {
+  return JSON.stringify({ fase: 'falhou', mensagem, heartbeat: agoraSeg, quando: agoraSeg, versao: VERSAO })
+}
+
+/** One line for instalacao.log, in the installer's own format. */
+export function linhaLog(agoraMs: number, texto: string): string {
+  const d = new Date(agoraMs)
+  const p = (n: number) => String(n).padStart(2, '0')
+  const quando = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+
+  return `${quando} [plugin] ${texto}`
 }
 
 export function silenciado(cfg: Cfg, agoraSeg: number): boolean {
@@ -128,18 +216,28 @@ export function chamar(cfg: Cfg, frase: string): string {
 
 /**
  * What the built-in Windows voice says while the neural voice is still being
- * prepared: only the moments that need the person, never a plain "done".
+ * prepared, under the same switches and minimum time as aviso.py.
+ * `durSeg` is how long the task has run; undefined when unknown.
  */
-export function fraseReserva(comando: string, e: Record<string, unknown>, cfg: Cfg): string | undefined {
+export function fraseReserva(
+  comando: string,
+  e: Record<string, unknown>,
+  cfg: Cfg,
+  durSeg?: number,
+): string | undefined {
   if (comando === 'notificacao') {
     const tipo = String(e.notification_type ?? '')
     if (!NOTIFICACOES_FALADAS.includes(tipo)) return undefined
+    if (motivoCalar(cfg, 'precisa', durSeg) !== '') return undefined
     return tipo === 'permission_prompt' ? chamar(cfg, 'preciso da sua autorização.') : chamar(cfg, 'tenho uma pergunta para você.')
   }
   if (comando === 'stop') {
+    if (e.stop_hook_active === true) return undefined
     const resposta = String(e.last_assistant_message ?? '').trim()
-    if (e.stop_hook_active === true || !resposta.endsWith('?')) return undefined
-    return chamar(cfg, 'terminei e tenho uma pergunta para você.')
+    if (resposta === '') return undefined
+    const tipo = resposta.endsWith('?') ? 'precisa' : 'concluido'
+    if (motivoCalar(cfg, tipo, durSeg) !== '') return undefined
+    return tipo === 'precisa' ? chamar(cfg, 'terminei e tenho uma pergunta para você.') : chamar(cfg, 'terminei.')
   }
 
   return undefined
@@ -153,8 +251,9 @@ export function argumentosInstalador(instalador: string, dados: string, forcar: 
   return `-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "${instalador}" -Dados "${dados}"${forcar ? ' -Forcar' : ''}`
 }
 
+// Starts the installer detached; if Windows refuses, the reason goes to stdout so the plugin can log it.
 export const LANCAR_INSTALADOR =
-  'Start-Process -WindowStyle Hidden -FilePath powershell.exe -ArgumentList $env:AVISO_VOZ_ARGS'
+  "try { $p = Start-Process -WindowStyle Hidden -FilePath powershell.exe -ArgumentList $env:AVISO_VOZ_ARGS -PassThru -ErrorAction Stop; 'iniciado ' + $p.Id } catch { 'erro ' + $_.Exception.Message; exit 1 }"
 
 /** The built-in Windows voice (SAPI), with a Brazilian voice when one is installed. */
 export const FALAR_SAPI =
@@ -176,6 +275,7 @@ export function resumoStatus(r: Runtime, cfg: Cfg, agoraSeg: number, isWindows: 
   const linhas = [
     `Aviso por voz ${VERSAO}: ${cfg.ligado === false ? 'desligado' : 'ligado'}`,
     `Voz: ${textoFase(r)}${r.fase === 'falhou' && r.mensagem ? ` (${r.mensagem})` : ''}`,
+    `Quando termina: ${cfg.avisar_ao_terminar === false ? 'silêncio' : 'falo'} · quando precisa de você: ${cfg.avisar_quando_precisa === false ? 'silêncio' : 'falo'} · mínimo: ${cfg.respostas_curtas === true ? 'nenhum (falar todas)' : `${Number(cfg.minimo_tarefa_segundos ?? PADRAO.minimo_tarefa_segundos)}s`}`,
     `Voz escolhida: ${cfg.voz} · tamanho: ${cfg.tamanho} · repetir: ${Number(cfg.repetir_minutos) > 0 ? `a cada ${cfg.repetir_minutos} min` : 'não'}`,
     `Nome: ${String(cfg.nome ?? '').trim() || '(nenhum)'}${silencio > 0 ? ` · em silêncio por mais ${silencio} min` : ''}`,
   ]
