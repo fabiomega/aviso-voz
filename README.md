@@ -33,11 +33,11 @@ Leva uns 10 minutos. Você só faz isso **uma vez**.
 
 ### Passo 1 · Aceitar o convite do GitHub
 1. Tenha uma conta gratuita no [GitHub](https://github.com/signup).
-2. Abra o e-mail do convite do **FabaoMega** e clique em **Accept invitation** (ou entre em github.com/FabaoMega/aviso-voz e aceite).
+2. Abra o e-mail do convite para **fabiomega/aviso-voz** e clique em **Accept invitation** (ou entre em github.com/fabiomega/aviso-voz e aceite).
 
 ### Passo 2 · Deixar o seu computador entrar no GitHub
 O Claude precisa do seu login do GitHub para baixar o plugin, porque o repositório é privado.
-Se você já fez isso para outro plugin do FabaoMega, **pule para o passo 3**.
+Se você já fez isso para outro plugin da **fabiomega**, **pule para o passo 3**.
 
 1. Abra o menu Iniciar, digite **PowerShell** e abra.
 2. Instale a ferramenta do GitHub (se pedir permissão, aceite):
@@ -57,12 +57,12 @@ Se você já fez isso para outro plugin do FabaoMega, **pule para o passo 3**.
 ### Passo 3 · Instalar no Claude
 **No app do Claude (aba Code):**
 1. Clique no **+** ao lado da caixa de mensagem e depois em **Plugins**.
-2. Clique em **Add marketplace**, digite `FabaoMega/aviso-voz` e confirme.
+2. Clique em **Add marketplace**, digite `fabiomega/aviso-voz` e confirme.
 3. Clique em **Add plugin** e escolha **aviso-voz**.
 
 **No terminal (Claude Code):**
 ```
-/plugin install aviso-voz --marketplace FabaoMega/aviso-voz
+/plugin install aviso-voz --marketplace fabiomega/aviso-voz
 ```
 Responda `y` à pergunta de adicionar o marketplace e escolha o escopo de usuário (**user**).
 
