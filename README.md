@@ -14,7 +14,7 @@ Também avisa quando algo dá errado, porque erro é sempre falado.
 - **Silêncio quando você quiser**: 30 min, 1 h, 2 h, ou desligado.
 - **Painel de ajustes** em português: `/aviso-voz`.
 
-> Este repositório é **privado**: só entra quem recebeu convite. Não compartilhe o acesso.
+> Repositório **público**: qualquer pessoa pode baixar e instalar, sem convite e sem login no GitHub.
 
 ---
 
@@ -29,32 +29,9 @@ Também avisa quando algo dá errado, porque erro é sempre falado.
 
 ## Como instalar (passo a passo para leigos)
 
-Leva uns 10 minutos. Você só faz isso **uma vez**.
+Leva uns 5 minutos. Você só faz isso **uma vez**.
 
-### Passo 1 · Aceitar o convite do GitHub
-1. Tenha uma conta gratuita no [GitHub](https://github.com/signup).
-2. Abra o e-mail do convite para **fabiomega/aviso-voz** e clique em **Accept invitation** (ou entre em github.com/fabiomega/aviso-voz e aceite).
-
-### Passo 2 · Deixar o seu computador entrar no GitHub
-O Claude precisa do seu login do GitHub para baixar o plugin, porque o repositório é privado.
-Se você já fez isso para outro plugin da **fabiomega**, **pule para o passo 3**.
-
-1. Abra o menu Iniciar, digite **PowerShell** e abra.
-2. Instale a ferramenta do GitHub (se pedir permissão, aceite):
-   ```
-   winget install --id GitHub.cli -e
-   ```
-3. **Feche o PowerShell e abra de novo.**
-4. Faça o login. Escolha **GitHub.com**, depois **HTTPS**, depois **Login with a web browser**, copie o código que aparecer e confirme no navegador:
-   ```
-   gh auth login
-   ```
-5. Ligue o login ao Git:
-   ```
-   gh auth setup-git
-   ```
-
-### Passo 3 · Instalar no Claude
+### Passo 1 · Instalar no Claude
 **No app do Claude (aba Code):**
 1. Clique no **+** ao lado da caixa de mensagem e depois em **Plugins**.
 2. Clique em **Add marketplace**, digite `fabiomega/aviso-voz` e confirme.
@@ -66,7 +43,7 @@ Se você já fez isso para outro plugin da **fabiomega**, **pule para o passo 3*
 ```
 Responda `y` à pergunta de adicionar o marketplace e escolha o escopo de usuário (**user**).
 
-### Passo 4 · Reiniciar e deixar ele preparar a voz
+### Passo 2 · Reiniciar e deixar ele preparar a voz
 1. Feche o Claude por completo (ícone perto do relógio, botão direito, **Sair**) e abra de novo.
 2. Numa conversa nova, mande uma mensagem qualquer. Se o app perguntar se pode ligar os mods, aceite.
 3. **A voz natural baixa sozinha, sem você clicar em nada.** O painel abre e o card **Voz natural** mostra uma **barra laranja** com o andamento ("Baixando a voz natural… 45% · 18 de 40 MB").
@@ -130,7 +107,7 @@ Digite cada comando **sozinho** na mensagem.
 
 | Problema | O que fazer |
 | --- | --- |
-| "Repository not found" ao instalar | Aceite o convite (passo 1) e refaça o login (`gh auth login`, depois `gh auth setup-git`) |
+| "Repository not found" ao instalar | Confira se digitou `fabiomega/aviso-voz` certinho, sem espaço |
 | Não sai som nenhum | Confira o volume do Windows e rode `/aviso-voz testar`. Depois veja `/aviso-voz status` |
 | A barra não anda, ou some sem terminar | O instalador se recupera sozinho se travar. Se não, toque em **Tentar de novo** ou rode `/aviso-voz instalar`. A primeira vez precisa de internet |
 | "Não consegui preparar a voz" | Antivírus ou a rede da empresa podem bloquear o download. Libere `github.com`, `python.org` e `pypi.org`, e rode `/aviso-voz instalar` |
